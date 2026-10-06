@@ -8,6 +8,7 @@ const express = require("express");
 const QRCode = require("qrcode");
 const googleTTS = require("google-tts-api");
 const axios = require("axios");
+const ffmpeg = require("fluent-ffmpeg");
 const fs = require("fs");
 
 const app = express();
@@ -63,7 +64,6 @@ app.get("/", async (req, res) => {
       </html>
     `);
   }
-
 
   res.send(`
     <html>
@@ -122,13 +122,26 @@ app.listen(PORT, () => {
 
 
 // ===============================
-// TEXT → VOICE
+// CREATE WHATSAPP VOICE NOTE
 // ===============================
 
 async function createVoice(text) {
 
+  const mp3File =
+    "/tmp/reply.mp3";
+
+  const oggFile =
+    "/tmp/reply.ogg";
+
+
   try {
 
+    console.log(
+      "Creating voice audio..."
+    );
+
+
+    // Get Google TTS audio URL
     const url =
       googleTTS.getAudioUrl(
         text,
@@ -139,6 +152,8 @@ async function createVoice(text) {
         }
       );
 
+
+    // Download MP3
     const response =
       await axios.get(
         url,
@@ -147,20 +162,59 @@ async function createVoice(text) {
         }
       );
 
-    const filePath =
-      "/tmp/reply.mp3";
 
     fs.writeFileSync(
-      filePath,
+      mp3File,
       response.data
     );
 
-    return filePath;
+
+    console.log(
+      "MP3 audio created."
+    );
+
+
+    // Convert MP3 → OGG/Opus
+    await new Promise(
+      (resolve, reject) => {
+
+        ffmpeg(mp3File)
+
+          .audioCodec("libopus")
+
+          .audioChannels(1)
+
+          .audioFrequency(48000)
+
+          .format("ogg")
+
+          .on(
+            "end",
+            resolve
+          )
+
+          .on(
+            "error",
+            reject
+          )
+
+          .save(oggFile);
+
+      }
+    );
+
+
+    console.log(
+      "OGG/Opus voice note created."
+    );
+
+
+    return oggFile;
 
   } catch (error) {
 
     console.log(
-      "Voice generation error:",
+      "Voice creation error:",
       error.message
     );
 
@@ -287,7 +341,7 @@ async function startBot() {
       }
 
 
-      // Ignore messages sent by the bot
+      // Ignore messages sent by bot
       if (message.key.fromMe) {
         return;
       }
@@ -326,7 +380,7 @@ async function startBot() {
 
 
       // =============================
-      // CREATE REPLY
+      // REPLY TEXT
       // =============================
 
       const replyText =
@@ -346,16 +400,25 @@ async function startBot() {
 
       if (!voiceFile) {
 
+        console.log(
+          "Could not create voice file."
+        );
+
         return;
 
       }
 
 
       // =============================
-      // SEND VOICE MESSAGE
+      // SEND WHATSAPP VOICE NOTE
       // =============================
 
       try {
+
+        console.log(
+          "Sending voice note..."
+        );
+
 
         await sock.sendMessage(
           remoteJid,
@@ -366,7 +429,7 @@ async function startBot() {
               ),
 
             mimetype:
-              "audio/mpeg",
+              "audio/ogg; codecs=opus",
 
             ptt: true
           }
@@ -374,7 +437,7 @@ async function startBot() {
 
 
         console.log(
-          "Voice reply sent."
+          "Voice reply sent successfully."
         );
 
 
@@ -388,11 +451,19 @@ async function startBot() {
       }
 
 
-      // Remove temporary file
+      // Remove temporary files
       try {
 
         fs.unlinkSync(
           voiceFile
+        );
+
+      } catch (error) {}
+
+      try {
+
+        fs.unlinkSync(
+          "/tmp/reply.mp3"
         );
 
       } catch (error) {}
@@ -404,7 +475,7 @@ async function startBot() {
 
 
 // ===============================
-// START
+// START BOT
 // ===============================
 
 startBot();
